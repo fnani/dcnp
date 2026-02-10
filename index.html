@@ -399,257 +399,246 @@
     </div>
 
     <script>
-      let products = [];
-      let checkedIds =
-        JSON.parse(localStorage.getItem("EIGER_CHECKED_V2")) || [];
-      let currentTab = "all";
-      let apiUrl = localStorage.getItem("API_URL_V2") || "";
-      let sortMode = "none";
-      let abortController = null; // Pengontrol pembatalan sync
+  let products = [];
+  let checkedIds = JSON.parse(localStorage.getItem("EIGER_CHECKED_V2")) || [];
+  let currentTab = "all";
+  let apiUrl = localStorage.getItem("API_URL_V2") || "";
+  let sortMode = "none"; // Mode: "none" atau "discount"
+  let abortController = null;
 
-      window.onload = () => {
-        if (apiUrl) {
-          document.getElementById("api-url").value = apiUrl;
-          fetchData();
-        } else {
-          toggleModal(true);
+  window.onload = () => {
+    if (apiUrl) {
+      document.getElementById("api-url").value = apiUrl;
+      fetchData();
+    } else {
+      toggleModal(true);
+    }
+  };
+
+  function toggleModal(show) {
+    document.getElementById("modal-settings").classList.toggle("hidden", !show);
+  }
+
+  function handleSyncClick() {
+    if (!apiUrl) toggleModal(true);
+    else fetchData();
+  }
+
+  async function saveAndSync() {
+    const url = document.getElementById("api-url").value.trim();
+    if (!url) return;
+    localStorage.setItem("API_URL_V2", url);
+    apiUrl = url;
+    await fetchData();
+    toggleModal(false);
+  }
+
+  function disconnectSync() {
+    if (confirm("Putuskan koneksi dari Sheet ini?")) {
+      localStorage.removeItem("API_URL_V2");
+      apiUrl = "";
+      document.getElementById("api-url").value = "";
+      products = [];
+      checkedIds = [];
+      localStorage.removeItem("EIGER_CHECKED_V2");
+      renderList();
+      updateStats();
+      toggleModal(false);
+      showToast("Koneksi Diputus", "error");
+    }
+  }
+
+  function abortSync() {
+    if (abortController) {
+      abortController.abort();
+      abortController = null;
+      const overlay = document.getElementById("loading-overlay");
+      overlay.style.opacity = "0";
+      setTimeout(() => (overlay.style.display = "none"), 400);
+      showToast("Sync Dibatalkan", "error");
+    }
+  }
+
+  async function fetchData() {
+    if (!apiUrl) return;
+
+    if (abortController) abortController.abort();
+    abortController = new AbortController();
+    const signal = abortController.signal;
+
+    const overlay = document.getElementById("loading-overlay");
+    overlay.style.display = "flex";
+    setTimeout(() => (overlay.style.opacity = "1"), 10);
+
+    try {
+      const response = await fetch(apiUrl, { signal });
+      products = await response.json();
+
+      products.forEach((p) => {
+        if (
+          (p.status === "Sudah Dicek" || p.status === "DONE") &&
+          !checkedIds.includes(p.id)
+        ) {
+          checkedIds.push(p.id);
         }
-      };
-
-      function toggleModal(show) {
-        document
-          .getElementById("modal-settings")
-          .classList.toggle("hidden", !show);
+      });
+      localStorage.setItem("EIGER_CHECKED_V2", JSON.stringify(checkedIds));
+      renderList();
+      updateStats();
+      showToast("Data Diperbarui", "success");
+    } catch (err) {
+      if (err.name === "AbortError") {
+        console.log("Fetch aborted");
+      } else {
+        showToast("Gagal Sinkron", "error");
       }
+    } finally {
+      setTimeout(() => {
+        overlay.style.opacity = "0";
+        setTimeout(() => (overlay.style.display = "none"), 400);
+      }, 800);
+      abortController = null;
+    }
+  }
 
-      function handleSyncClick() {
-        if (!apiUrl) toggleModal(true);
-        else fetchData();
-      }
+  function toggleCheck(id) {
+    const index = checkedIds.indexOf(id);
+    let statusToSend = index > -1 ? "" : "DONE";
 
-      async function saveAndSync() {
-        const url = document.getElementById("api-url").value.trim();
-        if (!url) return;
-        localStorage.setItem("API_URL_V2", url);
-        apiUrl = url;
-        await fetchData();
-        toggleModal(false);
-      }
+    if (index > -1) {
+      checkedIds.splice(index, 1);
+      showToast("Batal Cek", "error");
+    } else {
+      checkedIds.push(id);
+      showToast("Selesai Dicek", "success");
+    }
 
-      // Fungsi Memutuskan Koneksi (Ganti Sync Lain)
-      function disconnectSync() {
-        if (confirm("Putuskan koneksi dari Sheet ini?")) {
-          localStorage.removeItem("API_URL_V2");
-          apiUrl = "";
-          document.getElementById("api-url").value = "";
-          products = [];
-          checkedIds = [];
-          localStorage.removeItem("EIGER_CHECKED_V2");
-          renderList();
-          updateStats();
-          toggleModal(false);
-          showToast("Koneksi Diputus", "error");
-        }
-      }
+    localStorage.setItem("EIGER_CHECKED_V2", JSON.stringify(checkedIds));
+    updateStats();
+    renderList();
 
-      // Fungsi Membatalkan Sync
-      function abortSync() {
-        if (abortController) {
-          abortController.abort();
-          abortController = null;
-          const overlay = document.getElementById("loading-overlay");
-          overlay.style.opacity = "0";
-          setTimeout(() => (overlay.style.display = "none"), 400);
-          showToast("Sync Dibatalkan", "error");
-        }
-      }
+    if (apiUrl) {
+      fetch(apiUrl, {
+        method: "POST",
+        mode: "no-cors",
+        body: JSON.stringify({ id: id, status: statusToSend }),
+      });
+    }
+  }
 
-      async function fetchData() {
-        if (!apiUrl) return;
+  // MODIFIKASI: Fitur sortir diskon terbesar ke terkecil
+  function toggleSort() {
+    sortMode = sortMode === "none" ? "discount" : "none";
+    const btn = document.getElementById("btn-sort");
+    
+    btn.className =
+      sortMode === "none"
+        ? "bg-slate-50 px-5 rounded-2xl text-slate-400 hover:text-blue-600 transition-all active:scale-90"
+        : "bg-blue-600 px-5 rounded-2xl text-white shadow-lg shadow-blue-100 transition-all active:scale-90";
+    renderList();
+  }
 
-        // Batalkan fetch sebelumnya jika ada
-        if (abortController) abortController.abort();
-        abortController = new AbortController();
-        const signal = abortController.signal;
+  function renderList() {
+    const container = document.getElementById("product-list");
+    const query = document.getElementById("search-input").value.toLowerCase();
+    container.innerHTML = "";
 
-        const overlay = document.getElementById("loading-overlay");
-        overlay.style.display = "flex";
-        setTimeout(() => (overlay.style.opacity = "1"), 10);
+    let filtered = products.filter(
+      (p) =>
+        p.id.toString().includes(query.toUpperCase()) ||
+        p.name.toLowerCase().includes(query),
+    );
 
-        try {
-          const response = await fetch(apiUrl, { signal });
-          products = await response.json();
+    if (currentTab === "pending")
+      filtered = filtered.filter((p) => !checkedIds.includes(p.id));
+    if (currentTab === "done")
+      filtered = filtered.filter((p) => checkedIds.includes(p.id));
 
-          products.forEach((p) => {
-            if (
-              (p.status === "Sudah Dicek" || p.status === "DONE") &&
-              !checkedIds.includes(p.id)
-            ) {
-              checkedIds.push(p.id);
-            }
-          });
-          localStorage.setItem("EIGER_CHECKED_V2", JSON.stringify(checkedIds));
-          renderList();
-          updateStats();
-          showToast("Data Diperbarui", "success");
-        } catch (err) {
-          if (err.name === "AbortError") {
-            console.log("Fetch aborted");
-          } else {
-            showToast("Gagal Sinkron", "error");
-          }
-        } finally {
-          setTimeout(() => {
-            overlay.style.opacity = "0";
-            setTimeout(() => (overlay.style.display = "none"), 400);
-          }, 800);
-          abortController = null;
-        }
-      }
+    // MODIFIKASI: Logika pengurutan berdasarkan nilai diskon
+    if (sortMode === "discount") {
+      filtered.sort((a, b) => {
+        // Mengambil angka dari diskon (misal "50%" jadi 50)
+        let discA = parseFloat(a.disc) || 0;
+        let discB = parseFloat(b.disc) || 0;
+        return discB - discA; // Besar ke kecil
+      });
+    }
 
-      function toggleCheck(id) {
-        const index = checkedIds.indexOf(id);
-        let statusToSend = index > -1 ? "" : "DONE";
+    filtered.forEach((p) => {
+      const isChecked = checkedIds.includes(p.id);
+      const card = document.createElement("div");
+      card.className = `product-card p-6 border border-slate-100 flex justify-between items-center cursor-pointer shadow-sm ${isChecked ? "done" : ""}`;
+      card.onclick = () => toggleCheck(p.id);
 
-        if (index > -1) {
-          checkedIds.splice(index, 1);
-          showToast("Batal Cek", "error");
-        } else {
-          checkedIds.push(id);
-          showToast("Selesai Dicek", "success");
-        }
+      card.innerHTML = `
+            <div class="flex-1 content-area">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded-lg uppercase tracking-wider">${p.id}</span>
+                    <span class="text-[10px] font-black text-rose-500 bg-rose-50 px-2 py-0.5 rounded-lg">-${p.disc}</span>
+                    <span class="text-[10px] font-black ${p.stock > 0 ? "text-emerald-500 bg-emerald-50" : "text-slate-400 bg-slate-50"} px-2 py-0.5 rounded-lg">STOK: ${p.stock || 0}</span>
+                </div>
+                <h3 class="font-bold text-slate-800 text-sm mb-3 line-clamp-1">${p.name}</h3>
+                <div class="flex items-center gap-3">
+                    <p class="text-blue-600 font-black text-xl tracking-tight">IDR ${p.price}</p>
+                    <span class="text-[11px] font-bold text-slate-300 line-through">IDR ${p.oldPrice}</span>
+                </div>
+            </div>
+            <div class="ml-4">
+                <div class="check-icon-box w-12 h-12 rounded-[20px] border-2 flex items-center justify-center transition-all ${isChecked ? "bg-emerald-500 border-emerald-500 text-white shadow-lg shadow-emerald-100" : "border-slate-100 text-slate-100 bg-white"}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+            </div>
+        `;
+      container.appendChild(card);
+    });
+  }
 
-        localStorage.setItem("EIGER_CHECKED_V2", JSON.stringify(checkedIds));
-        updateStats();
-        renderList();
+  document.getElementById("search-input").addEventListener("input", renderList);
 
-        if (apiUrl) {
-          fetch(apiUrl, {
-            method: "POST",
-            mode: "no-cors",
-            body: JSON.stringify({ id: id, status: statusToSend }),
-          });
-        }
-      }
+  function updateStats() {
+    const total = products.length;
+    const checked = checkedIds.length;
+    const percent = total > 0 ? Math.round((checked / total) * 100) : 0;
 
-      function toggleSort() {
-        sortMode =
-          sortMode === "none" ? "desc" : sortMode === "desc" ? "asc" : "none";
-        const btn = document.getElementById("btn-sort");
-        btn.className =
-          sortMode === "none"
-            ? "bg-slate-50 px-5 rounded-2xl text-slate-400 hover:text-blue-600 transition-all active:scale-90"
-            : "bg-blue-600 px-5 rounded-2xl text-white shadow-lg shadow-blue-100 transition-all active:scale-90";
-        renderList();
-      }
+    document.getElementById("stat-count").innerText = checked;
+    document.getElementById("stat-total").innerText = total;
+    document.getElementById("stat-percent").innerText = percent + "%";
 
-      function renderList() {
-        const container = document.getElementById("product-list");
-        const query = document
-          .getElementById("search-input")
-          .value.toLowerCase();
-        container.innerHTML = "";
+    document.getElementById("progress-line-fill").style.width = percent + "%";
+  }
 
-        let filtered = products.filter(
-          (p) =>
-            p.id.toString().includes(query.toUpperCase()) ||
-            p.name.toLowerCase().includes(query),
-        );
+  function changeTab(tab) {
+    currentTab = tab;
+    ["all", "pending", "done"].forEach((t) => {
+      const el = document.getElementById(`tab-${t}`);
+      el.className =
+        t === tab
+          ? "flex-1 pb-4 text-sm font-extrabold tab-active transition-all"
+          : "flex-1 pb-4 text-sm font-extrabold text-slate-300 transition-all";
+    });
+    renderList();
+  }
 
-        if (currentTab === "pending")
-          filtered = filtered.filter((p) => !checkedIds.includes(p.id));
-        if (currentTab === "done")
-          filtered = filtered.filter((p) => checkedIds.includes(p.id));
+  function showToast(msg, type = "info") {
+    const t = document.getElementById("toast");
+    const icon = document.getElementById("toast-icon");
+    const text = document.getElementById("toast-text");
 
-        if (sortMode !== "none") {
-          filtered.sort((a, b) => {
-            let valA = parseFloat(a.price.replace(/\./g, ""));
-            let valB = parseFloat(b.price.replace(/\./g, ""));
-            return sortMode === "desc" ? valB - valA : valA - valB;
-          });
-        }
+    text.innerText = msg;
 
-        filtered.forEach((p) => {
-          const isChecked = checkedIds.includes(p.id);
-          const card = document.createElement("div");
-          card.className = `product-card p-6 border border-slate-100 flex justify-between items-center cursor-pointer shadow-sm ${isChecked ? "done" : ""}`;
-          card.onclick = () => toggleCheck(p.id);
+    if (type === "success") {
+      icon.className = "w-4 h-4 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]";
+    } else if (type === "error") {
+      icon.className = "w-4 h-4 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]";
+    } else {
+      icon.className = "w-4 h-4 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]";
+    }
 
-          card.innerHTML = `
-                    <div class="flex-1 content-area">
-                        <div class="flex items-center gap-2 mb-2">
-                            <span class="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded-lg uppercase tracking-wider">${p.id}</span>
-                            <span class="text-[10px] font-black text-rose-500 bg-rose-50 px-2 py-0.5 rounded-lg">-${p.disc}</span>
-                            <span class="text-[10px] font-black ${p.stock > 0 ? "text-emerald-500 bg-emerald-50" : "text-slate-400 bg-slate-50"} px-2 py-0.5 rounded-lg">STOK: ${p.stock || 0}</span>
-                        </div>
-                        <h3 class="font-bold text-slate-800 text-sm mb-3 line-clamp-1">${p.name}</h3>
-                        <div class="flex items-center gap-3">
-                            <p class="text-blue-600 font-black text-xl tracking-tight">IDR ${p.price}</p>
-                            <span class="text-[11px] font-bold text-slate-300 line-through">IDR ${p.oldPrice}</span>
-                        </div>
-                    </div>
-                    <div class="ml-4">
-                        <div class="check-icon-box w-12 h-12 rounded-[20px] border-2 flex items-center justify-center transition-all ${isChecked ? "bg-emerald-500 border-emerald-500 text-white shadow-lg shadow-emerald-100" : "border-slate-100 text-slate-100 bg-white"}">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
-                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                            </svg>
-                        </div>
-                    </div>
-                `;
-          container.appendChild(card);
-        });
-      }
-
-      document
-        .getElementById("search-input")
-        .addEventListener("input", renderList);
-
-      function updateStats() {
-        const total = products.length;
-        const checked = checkedIds.length;
-        const percent = total > 0 ? Math.round((checked / total) * 100) : 0;
-
-        document.getElementById("stat-count").innerText = checked;
-        document.getElementById("stat-total").innerText = total;
-        document.getElementById("stat-percent").innerText = percent + "%";
-
-        document.getElementById("progress-line-fill").style.width =
-          percent + "%";
-      }
-
-      function changeTab(tab) {
-        currentTab = tab;
-        ["all", "pending", "done"].forEach((t) => {
-          const el = document.getElementById(`tab-${t}`);
-          el.className =
-            t === tab
-              ? "flex-1 pb-4 text-sm font-extrabold tab-active transition-all"
-              : "flex-1 pb-4 text-sm font-extrabold text-slate-300 transition-all";
-        });
-        renderList();
-      }
-
-      function showToast(msg, type = "info") {
-        const t = document.getElementById("toast");
-        const icon = document.getElementById("toast-icon");
-        const text = document.getElementById("toast-text");
-
-        text.innerText = msg;
-
-        if (type === "success") {
-          icon.className =
-            "w-4 h-4 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]";
-        } else if (type === "error") {
-          icon.className =
-            "w-4 h-4 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]";
-        } else {
-          icon.className =
-            "w-4 h-4 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]";
-        }
-
-        t.style.display = "flex";
-        setTimeout(() => (t.style.display = "none"), 2000);
-      }
-    </script>
+    t.style.display = "flex";
+    setTimeout(() => (t.style.display = "none"), 2000);
+  }
+</script>
   </body>
 </html>
